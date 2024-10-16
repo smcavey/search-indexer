@@ -32,6 +32,11 @@ var (
 		Buckets: []float64{50, 100, 200, 500, 5000, 10000, 25000, 50000, 100000, 200000},
 	})
 
+	DBSize = promauto.With(PromRegistry).NewGauge(prometheus.GaugeOpts{
+		Name: "search_db_size",
+		Help: "Size of the database (in bytes).",
+	})
+
 	// FUTURE: The summary metric could combine RequestCount and RequestDuration into a single metric.
 	// RequestSummary = promauto.With(PromRegistry).NewSummaryVec(prometheus.SummaryOpts{
 	// 	Name: "search_indexer_requests_summary",

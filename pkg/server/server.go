@@ -32,6 +32,20 @@ func (s *ServerConfig) StartAndListen(ctx context.Context) {
 	syncSubrouter.Use(requestLimiterMiddleware)
 	syncSubrouter.HandleFunc("/clusters/{id}/sync", s.SyncResources).Methods("POST")
 
+	// compute these metrics in goroutine every 30 seconds instead of on request
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				updateDatabaseSize(ctx, s.Dao)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Configure TLS
 	cfg := &tls.Config{
 		MinVersion:               tls.VersionTLS12,
@@ -74,4 +88,9 @@ func (s *ServerConfig) StartAndListen(ctx context.Context) {
 		klog.Warning("Server stopped.")
 	}
 	ctxCancel()
+}
+
+func updateDatabaseSize(ctx context.Context, dao *database.DAO) {
+	dbSize := dao.GetDatabaseSize(ctx)
+	metrics.DBSize.Set(dbSize)
 }
