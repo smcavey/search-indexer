@@ -3,10 +3,14 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/stolostron/search-indexer/pkg/metrics"
@@ -14,30 +18,130 @@ import (
 	"k8s.io/klog/v2"
 )
 
+func PrintMem(msg string) {
+	fmt.Printf(msg + strings.Repeat("\t", 6-len(msg)/8))
+	bToMb := func(b uint64) uint64 {
+		return b / 1024 / 1024
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
+	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	// fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
+	// fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
+	fmt.Printf("\tobjects: %v", m.HeapObjects)
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	fmt.Printf(msg + " (GC)" + strings.Repeat("\t", 6-len(msg+" (GC)")/8))
+	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	fmt.Printf("\tobjects: %v", m.HeapObjects)
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+}
+
 // Reset data for the cluster to the incoming state.
 func (dao *DAO) ResyncData(ctx context.Context, event model.SyncEvent,
-	clusterName string, syncResponse *model.SyncResponse) error {
+	clusterName string, syncResponse *model.SyncResponse, body []byte) error {
+	PrintMem("ResyncData start")
 
 	defer metrics.SlowLog(fmt.Sprintf("Slow resync from %12s. RequestId: %d", clusterName, event.RequestId), 0)()
 	klog.Infof(
 		"Starting resync from %12s. This is normal, but it could be a problem if it happens often.", clusterName)
 
 	// Reset resources
-	err := dao.resetResources(ctx, event.AddResources, clusterName, syncResponse)
+	PrintMem("resetResources start")
+	err := dao.resetResources(ctx, clusterName, syncResponse, body)
 	if err != nil {
 		klog.Warningf("Error resyncing resources for cluster %12s. Error: %+v", clusterName, err)
 		return err
 	}
+	PrintMem("resetResources end")
 
+	PrintMem("resetEdges start")
 	// Reset edges
-	err = dao.resetEdges(ctx, event.AddEdges, clusterName, syncResponse)
+	err = dao.resetEdges(ctx, clusterName, syncResponse, body)
 	if err != nil {
 		klog.Warningf("Error resyncing edges for cluster %12s. Error: %+v", clusterName, err)
 		return err
 	}
+	PrintMem("resetEdges end")
 
 	klog.V(1).Infof("Completed resync of cluster %12s.\t RequestId: %d", clusterName, event.RequestId)
+	PrintMem("ResyncData end")
 	return nil
+}
+
+func decodeAddResources(body []byte, key string) (map[string]*model.Resource, int, error) {
+	PrintMem("decodeAddResources start")
+	dest := make(map[string]*model.Resource)
+	dec := json.NewDecoder(bytes.NewReader(body))
+	count := 0
+
+	// read opening {
+	if _, err := dec.Token(); err != nil {
+		return dest, count, fmt.Errorf("error decoding SyncEvent token: %v", err)
+	}
+	for {
+		// read tokens until we get to addResources
+		field, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if field == key {
+			// read opening [
+			if _, err = dec.Token(); err != nil {
+				return dest, count, fmt.Errorf("error reading resource opening token: %v", err)
+			}
+			for dec.More() {
+				var resource model.Resource
+				if err = dec.Decode(&resource); err != nil {
+					return dest, count, fmt.Errorf("error decoding resource from request: %v", err)
+				}
+				count++
+				dest[resource.UID] = &resource
+			}
+			PrintMem("decodeAddResources end")
+			return dest, count, nil
+		}
+	}
+
+	PrintMem("decodeAddResources end")
+
+	return dest, count, nil
+}
+
+func decodeAddEdges(body []byte, key string) ([]model.Edge, error) {
+	PrintMem("decodeAddEdges start")
+	dest := make([]model.Edge, 0)
+	dec := json.NewDecoder(bytes.NewReader(body))
+
+	// read opening {
+	if _, err := dec.Token(); err != nil {
+		return dest, fmt.Errorf("error decoding SyncEvent token: %v", err)
+	}
+	for {
+		// read tokens until we ge to addEdges
+		field, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if field == key {
+			// read opening [
+			if _, err := dec.Token(); err != nil {
+				fmt.Println("err here: ", err.Error())
+			}
+			for dec.More() {
+				var edge model.Edge
+				if err = dec.Decode(&edge); err != nil {
+					return dest, fmt.Errorf("error decoding edge from request: %v", err)
+				}
+				dest = append(dest, edge)
+			}
+			return dest, nil
+		}
+	}
+	return dest, nil
 }
 
 // Reset Resources.
@@ -47,16 +151,14 @@ func (dao *DAO) ResyncData(ctx context.Context, event model.SyncEvent,
 //     - UPDATE if doesn't match the incoming resource.
 //     - DELETE if not found in the incoming resource.
 //  4. INSERT incoming resources not found in the existing resources.
-func (dao *DAO) resetResources(ctx context.Context, resources []model.Resource, clusterName string,
-	syncResponse *model.SyncResponse) error {
+func (dao *DAO) resetResources(ctx context.Context, clusterName string,
+	syncResponse *model.SyncResponse, body []byte) error {
 	timer := time.Now()
 
 	batch := NewBatchWithRetry(ctx, dao, syncResponse)
 
-	incomingResMap := make(map[string]*model.Resource)
-	for i, resource := range resources {
-		incomingResMap[resource.UID] = &resources[i]
-	}
+	incomingResMap, countResources, err := decodeAddResources(body, "addResources")
+	metrics.RequestSize.Observe(float64(countResources))
 	resourcesToDelete := make([]interface{}, 0)
 	resourcesToUpdate := make([]*model.Resource, 0)
 
@@ -183,7 +285,7 @@ func (dao *DAO) resetResources(ctx context.Context, resources []model.Resource, 
 	syncResponse.TotalUpdated = len(resourcesToUpdate)
 	metrics.LogStepDuration(&timer, clusterName,
 		fmt.Sprintf("Reset resources stats: UNCHANGED [%d] INSERT [%d] UPDATE [%d] DELETE [%d]",
-			len(resources)-len(incomingResMap)-len(resourcesToUpdate),
+			countResources-len(incomingResMap)-len(resourcesToUpdate),
 			syncResponse.TotalAdded, syncResponse.TotalUpdated, syncResponse.TotalDeleted))
 
 	return batch.connError
@@ -193,8 +295,8 @@ func (dao *DAO) resetResources(ctx context.Context, resources []model.Resource, 
 //  1. Get existing edges for the cluster. Excluding intercluster edges.
 //  2. For each incoming edge, INSERT if it doesn't exist.
 //  3. Delete any existing edges that aren't in the incoming sync event.
-func (dao *DAO) resetEdges(ctx context.Context, edges []model.Edge, clusterName string,
-	syncResponse *model.SyncResponse) error {
+func (dao *DAO) resetEdges(ctx context.Context, clusterName string,
+	syncResponse *model.SyncResponse, body []byte) error {
 	timer := time.Now()
 
 	batch := NewBatchWithRetry(ctx, dao, syncResponse)
@@ -226,6 +328,11 @@ func (dao *DAO) resetEdges(ctx context.Context, edges []model.Edge, clusterName 
 	metrics.LogStepDuration(&timer, clusterName, "Resync QUERY existing edges")
 
 	// Now compare existing edges with the new edges.
+	edges, err := decodeAddEdges(body, "addEdges")
+	if err != nil {
+		klog.Errorf("Error decoding edges: %v", err)
+		return err
+	}
 	for _, edge := range edges {
 		// If the edge already exists, do nothing.
 		if _, ok := existingEdgesMap[edge.SourceUID+edge.EdgeType+edge.DestUID]; ok {

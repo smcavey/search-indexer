@@ -3,34 +3,66 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
-	"net/http"
-	"time"
-
-	"github.com/stolostron/search-indexer/pkg/metrics"
-
 	"github.com/gorilla/mux"
 	"github.com/stolostron/search-indexer/pkg/config"
+	"github.com/stolostron/search-indexer/pkg/database"
 	"github.com/stolostron/search-indexer/pkg/model"
+	"io"
 	"k8s.io/klog/v2"
+	"net/http"
+	"time"
 )
 
+func decodeKey(body []byte, key string, dest interface{}) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	for {
+		t, err := decoder.Token()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			klog.Errorf("Error decoding token from request body: %s", err)
+		}
+		if k, ok := t.(string); ok && k == key {
+			if decoder.More() {
+				if err = decoder.Decode(dest); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
 func (s *ServerConfig) SyncResources(w http.ResponseWriter, r *http.Request) {
+	database.PrintMem("syncResources start")
 	start := time.Now()
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	clusterName := params["id"]
 
-	// Decode SyncEvent from request body.
+	// Copy request body and get ClearAll to determine processing procedure.
 	var syncEvent model.SyncEvent
-	err := json.NewDecoder(r.Body).Decode(&syncEvent)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		klog.Errorf("Error decoding request body from cluster [%s]. Error: %+v\n", clusterName, err)
+		klog.Errorf("Error copying request body: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	resourceTotal := len(syncEvent.AddResources) + len(syncEvent.UpdateResources) + len(syncEvent.DeleteResources)
-	metrics.RequestSize.Observe(float64(resourceTotal))
+	if err = decodeKey(body, "clearAll", &syncEvent.ClearAll); err != nil {
+		klog.Errorf("Error decoding clearAll from request body: %s", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if err = decodeKey(body, "requestId", &syncEvent.RequestId); err != nil {
+		klog.Errorf("Error decoding requestId from request body: %s", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	// Initialize SyncResponse object.
 	syncResponse := &model.SyncResponse{
@@ -47,9 +79,15 @@ func (s *ServerConfig) SyncResources(w http.ResponseWriter, r *http.Request) {
 	// 1. ReSync [ClearAll=true]  - It has the complete current state. It must overwrite any previous state.
 	// 2. Sync   [ClearAll=false] - This is the delta changes from the previous state.
 	if syncEvent.ClearAll {
-		err = s.Dao.ResyncData(r.Context(), syncEvent, clusterName, syncResponse)
+		if err = s.Dao.ResyncData(r.Context(), syncEvent, clusterName, syncResponse, body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 	} else {
-		err = s.Dao.SyncData(r.Context(), syncEvent, clusterName, syncResponse)
+		if err = s.Dao.SyncData(r.Context(), syncEvent, clusterName, syncResponse, body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 	}
 	if err != nil {
 		klog.Warningf("Responding with error to request from %12s. RequestId: %s  Error: %s",
@@ -76,6 +114,7 @@ func (s *ServerConfig) SyncResources(w http.ResponseWriter, r *http.Request) {
 		klog.Error("Error responding to SyncEvent:", encodeError, syncResponse)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
+	database.PrintMem("syncResources end")
 
 	// Log request.
 	klog.V(5).Infof("Request from [%12s] took [%v] clearAll [%t] addTotal [%d]",

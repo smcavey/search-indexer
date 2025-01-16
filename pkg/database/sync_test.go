@@ -30,7 +30,7 @@ func Test_SyncData(t *testing.T) {
 
 	// Execute test
 	response := &model.SyncResponse{}
-	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response)
+	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response, []byte{})
 
 	// Assert
 	assert.Nil(t, err)
@@ -63,7 +63,7 @@ func Test_Sync_With_Exec_Errors(t *testing.T) {
 
 	// Execute test
 	response := &model.SyncResponse{}
-	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response)
+	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response, []byte{})
 
 	// Assert
 	assert.Nil(t, err)
@@ -95,7 +95,7 @@ func Test_Sync_With_OnClose_Errors(t *testing.T) {
 
 	// Execute test
 	response := &model.SyncResponse{}
-	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response)
+	err := dao.SyncData(context.Background(), syncEvent, "test-cluster", response, []byte{})
 
 	// Assert
 	assert.NotNil(t, err)
