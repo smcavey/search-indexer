@@ -15,6 +15,8 @@ require (
 	github.com/prometheus/client_golang v1.22.0
 	github.com/stolostron/cluster-lifecycle-api v0.0.0-20250625062343-7394aeb3186c
 	github.com/stretchr/testify v1.10.0
+	google.golang.org/grpc v1.64.1
+	google.golang.org/protobuf v1.36.8
 	k8s.io/apimachinery v0.32.2
 	k8s.io/client-go v0.32.2
 	k8s.io/klog/v2 v2.130.1
@@ -68,7 +70,7 @@ require (
 	golang.org/x/term v0.31.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250908214217-97024824d090 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.32.2 // indirect
@@ -80,7 +82,7 @@ require (
 )
 
 replace (
+	github.com/imdario/mergo => dario.cat/mergo v1.0.2
 	k8s.io/api => k8s.io/api v0.30.4
 	k8s.io/client-go => k8s.io/client-go v0.30.4
-	github.com/imdario/mergo => dario.cat/mergo v1.0.2
 )

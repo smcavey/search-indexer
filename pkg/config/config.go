@@ -45,6 +45,8 @@ type Config struct {
 	LargeRequestLimit   int    // Max number of large concurrent requests. Used to help control memory spikes
 	LargeRequestSize    int    // Size defining a large request. Used by large request limiter middleware to control large requests
 	ServerAddress       string // Web server address
+	GRPCAddress         string // gRPC server address
+	EnableGRPC          bool   // Enable gRPC server
 	SlowLog             int    // Log operations slower than the specified time in ms. Default: 1 sec
 	Version             string
 }
@@ -77,6 +79,8 @@ func new() *Config {
 		LargeRequestLimit: getEnvAsInt("LARGE_REQUEST_LIMIT", 5),
 		LargeRequestSize:  getEnvAsInt("LARGE_REQUEST_SIZE", 1024*1024*20), // 20 MB
 		ServerAddress:     getEnv("AGGREGATOR_ADDRESS", ":3010"),
+		GRPCAddress:       getEnv("GRPC_ADDRESS", ":3011"),
+		EnableGRPC:        getEnv("ENABLE_GRPC", "true") == "true",
 		SlowLog:           getEnvAsInt("SLOW_LOG", 1000), // 1 second
 		Version:           COMPONENT_VERSION,
 	}
