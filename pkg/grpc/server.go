@@ -5,6 +5,9 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/stolostron/search-indexer/api/proto"
@@ -17,12 +20,15 @@ import (
 
 type SearchIndexerService struct {
 	proto.UnimplementedSearchIndexerServer
-	Dao *database.DAO
+	Dao      *database.DAO
+	sessions map[string]*database.StreamSession
+	mu       sync.RWMutex
 }
 
 func NewSearchIndexerService(dao *database.DAO) *SearchIndexerService {
 	return &SearchIndexerService{
-		Dao: dao,
+		Dao:      dao,
+		sessions: make(map[string]*database.StreamSession),
 	}
 }
 
@@ -89,7 +95,142 @@ func (s *SearchIndexerService) Health(ctx context.Context, req *proto.HealthRequ
 	}, nil
 }
 
+func (s *SearchIndexerService) StreamSync(stream proto.SearchIndexer_StreamSyncServer) error {
+	var session *database.StreamSession
+	var syncResponse *model.SyncResponse
+	var clusterName string
+	start := time.Now()
+
+	defer func() {
+		if session != nil {
+			s.mu.Lock()
+			delete(s.sessions, session.SessionID)
+			s.mu.Unlock()
+		}
+	}()
+
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			// Stream ended, finalize session
+			if session != nil {
+				if finalizeErr := s.Dao.FinalizeStreamSession(stream.Context(), session); finalizeErr != nil {
+					klog.Warningf("Error finalizing stream session for cluster %s: %v", clusterName, finalizeErr)
+					return finalizeErr
+				}
+
+				// Get total cluster resources for validation
+				totalResources, totalEdges, validateErr := s.Dao.ClusterTotals(stream.Context(), clusterName)
+				if validateErr != nil {
+					klog.Warningf("Error getting cluster totals for cluster %s. Error: %s", clusterName, validateErr)
+					return validateErr
+				}
+				syncResponse.TotalResources = totalResources
+				syncResponse.TotalEdges = totalEdges
+
+				// Log completion
+				klog.V(5).Infof("gRPC stream request from [%12s] took [%v] overwriteState [%t] totalAdded [%d]",
+					clusterName, time.Since(start), session.OverwriteState, syncResponse.TotalAdded)
+
+				// Send response
+				return stream.SendAndClose(syncResponseToProto(syncResponse))
+			}
+			return fmt.Errorf("stream ended without proper session initialization")
+		}
+
+		if err != nil {
+			klog.Warningf("Error receiving chunk from stream: %v", err)
+			return err
+		}
+
+		// Handle first chunk - initialize session
+		if chunk.GetIsFirstChunk() {
+			clusterName = chunk.GetClusterId()
+			sessionID := chunk.GetSessionId()
+
+			// Initialize SyncResponse
+			syncResponse = &model.SyncResponse{
+				Version:          config.COMPONENT_VERSION,
+				AddErrors:        make([]model.SyncError, 0),
+				UpdateErrors:     make([]model.SyncError, 0),
+				DeleteErrors:     make([]model.SyncError, 0),
+				AddEdgeErrors:    make([]model.SyncError, 0),
+				DeleteEdgeErrors: make([]model.SyncError, 0),
+			}
+
+			// Start stream session
+			session = s.Dao.StartStreamSession(stream.Context(), sessionID, clusterName, chunk.GetOverwriteState(), syncResponse)
+
+			// Store session for tracking
+			s.mu.Lock()
+			s.sessions[sessionID] = session
+			s.mu.Unlock()
+
+			klog.V(2).Infof("Started stream session %s for cluster %s (overwriteState: %t)", sessionID, clusterName, chunk.GetOverwriteState())
+		}
+
+		if session == nil {
+			return fmt.Errorf("received chunk before session initialization")
+		}
+
+		// Convert chunk to SyncEvent
+		syncEvent := protoChunkToSyncEvent(chunk)
+
+		// Process the chunk
+		resourceTotal := len(syncEvent.AddResources) + len(syncEvent.UpdateResources) + len(syncEvent.DeleteResources)
+		metrics.RequestSize.Observe(float64(resourceTotal))
+
+		if err := s.Dao.StreamSyncChunk(stream.Context(), session, syncEvent); err != nil {
+			klog.Warningf("Error processing stream chunk for cluster %s: %v", clusterName, err)
+			return err
+		}
+
+		klog.V(3).Infof("Processed chunk for session %s: add[%d] update[%d] delete[%d] addEdges[%d] deleteEdges[%d]",
+			session.SessionID, len(syncEvent.AddResources), len(syncEvent.UpdateResources),
+			len(syncEvent.DeleteResources), len(syncEvent.AddEdges), len(syncEvent.DeleteEdges))
+	}
+}
+
 // Helper functions to convert between gRPC and internal models
+
+func protoChunkToSyncEvent(chunk *proto.SyncChunk) model.SyncEvent {
+	syncEvent := model.SyncEvent{
+		AddResources:    make([]model.Resource, len(chunk.AddResources)),
+		UpdateResources: make([]model.Resource, len(chunk.UpdateResources)),
+		DeleteResources: make([]model.DeleteResourceEvent, len(chunk.DeleteResources)),
+		AddEdges:        make([]model.Edge, len(chunk.AddEdges)),
+		DeleteEdges:     make([]model.Edge, len(chunk.DeleteEdges)),
+	}
+
+	// Convert AddResources
+	for i, protoRes := range chunk.AddResources {
+		syncEvent.AddResources[i] = protoToResource(protoRes)
+	}
+
+	// Convert UpdateResources
+	for i, protoRes := range chunk.UpdateResources {
+		syncEvent.UpdateResources[i] = protoToResource(protoRes)
+	}
+
+	// Convert DeleteResources
+	for i, protoDel := range chunk.DeleteResources {
+		syncEvent.DeleteResources[i] = model.DeleteResourceEvent{
+			UID: protoDel.GetUid(),
+		}
+	}
+
+	// Convert AddEdges
+	for i, protoEdge := range chunk.AddEdges {
+		syncEvent.AddEdges[i] = protoToEdge(protoEdge)
+	}
+
+	// Convert DeleteEdges
+	for i, protoEdge := range chunk.DeleteEdges {
+		syncEvent.DeleteEdges[i] = protoToEdge(protoEdge)
+	}
+
+	return syncEvent
+}
 
 func protoToSyncEvent(req *proto.SyncRequest) model.SyncEvent {
 	syncEvent := model.SyncEvent{
