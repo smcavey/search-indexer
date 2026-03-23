@@ -2,18 +2,17 @@
 package testutils
 
 import (
-	"github.com/driftprogramming/pgxpoolmock"
 	"github.com/golang/mock/gomock"
 )
 
 // Mocks the existing state of the database for the test-cluster.
-func MockDatabaseState(mockPool *pgxpoolmock.MockPgxPool) {
+func MockDatabaseState(mockPool *MockPgxPool) {
 	columns := []string{"uid", "data"}
-	resourceRows := pgxpoolmock.NewRows(columns).AddRow("uid-123", `{"kind: "mock"}`).ToPgxRows()
+	resourceRows := NewRows(columns).AddRow("uid-123", `{"kind: "mock"}`).ToPgxRows()
 	edgeColumns := []string{"sourceId", "edgeType", "destId"}
-	edgeRows := pgxpoolmock.NewRows(edgeColumns).AddRow("sourceId1", "edgeType1", "destId1").ToPgxRows()
+	edgeRows := NewRows(edgeColumns).AddRow("sourceId1", "edgeType1", "destId1").ToPgxRows()
 	cluster := []string{"cluster"}
-	clusterRows := pgxpoolmock.NewRows(cluster).AddRow("test-cluster").ToPgxRows()
+	clusterRows := NewRows(cluster).AddRow("test-cluster").ToPgxRows()
 
 	mockPool.EXPECT().Query(gomock.Any(), gomock.Eq(
 		`SELECT "uid", "data" FROM "search"."resources" WHERE (("cluster" = $1) AND ("uid" != $2))`),

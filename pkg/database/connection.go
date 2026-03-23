@@ -9,23 +9,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/driftprogramming/pgxpoolmock"
-	"github.com/jackc/pgx/v4"
-	pgxpool "github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	pgxpool "github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stolostron/search-indexer/pkg/config"
+	"github.com/stolostron/search-indexer/pkg/testutils"
 	"k8s.io/klog/v2"
 )
 
 // Database Access Object. Use a DAO instance so we can replace the pool object in the unit tests.
 type DAO struct {
-	pool      pgxpoolmock.PgxPool
+	pool      testutils.PgxPool
 	batchSize int
 }
 
-var poolSingleton pgxpoolmock.PgxPool
+var poolSingleton testutils.PgxPool
 
 // Creates new DAO instance.
-func NewDAO(p pgxpoolmock.PgxPool) DAO {
+func NewDAO(p testutils.PgxPool) DAO {
 	// Crete DAO with default values.
 	dao := DAO{
 		batchSize: config.Cfg.DBBatchSize,
@@ -60,7 +60,7 @@ func beforeAcquire(ctx context.Context, c *pgx.Conn) bool {
 	return true
 }
 
-func initializePool() pgxpoolmock.PgxPool {
+func initializePool() testutils.PgxPool {
 	cfg := config.Cfg
 
 	dbConnString := fmt.Sprint(
@@ -95,7 +95,7 @@ func initializePool() pgxpoolmock.PgxPool {
 	var conn *pgxpool.Pool
 	var err error
 	for {
-		conn, err = pgxpool.ConnectConfig(context.TODO(), config)
+		conn, err = pgxpool.NewWithConfig(context.TODO(), config)
 		if err != nil {
 			// Max wait time is 30 sec
 			waitMS := int(math.Min(float64(retry*500), float64(cfg.MaxBackoffMS/10)))

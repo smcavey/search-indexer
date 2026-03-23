@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/driftprogramming/pgxpoolmock"
 	"github.com/golang/mock/gomock"
-	"github.com/jackc/pgx/v4"
-	"github.com/pashagolub/pgxmock"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stolostron/search-indexer/pkg/database"
+	"github.com/stolostron/search-indexer/pkg/testutils"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -127,7 +128,7 @@ func Test_ProcessClusterUpsert_ManagedCluster(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	// Prepare a mock DAO instance
 	dao = database.NewDAO(mockPool)
 	dynamicClient = fakeDynamicClient()
@@ -142,7 +143,7 @@ func Test_ProcessClusterUpsert_ManagedCluster(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	processClusterUpsert(context.Background(), obj)
 	// Once processClusterUpsert is done, existingClustersCache should have an entry for cluster foo
@@ -159,7 +160,7 @@ func Test_ProcessClusterUpsert_ManagedClusterInfo(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	// Prepare a mock DAO instance
 	dao = database.NewDAO(mockPool)
 	dynamicClient = fakeDynamicClient()
@@ -175,7 +176,7 @@ func Test_ProcessClusterUpsert_ManagedClusterInfo(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	processClusterUpsert(context.Background(), obj)
 	// Once processClusterUpsert is done, existingClustersCache should have an entry for cluster foo
@@ -230,7 +231,7 @@ func Test_ProcessClusterDeleteOnMC(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	// Prepare a mock DAO instance
 	dao = database.NewDAO(mockPool)
 
@@ -249,7 +250,7 @@ func Test_ProcessClusterDeleteOnMC(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(`DELETE FROM "search"."resources" WHERE ("uid" = 'cluster__name-foo')`),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	processClusterDelete(context.Background(), obj)
 
@@ -269,7 +270,7 @@ func Test_ProcessClusterDeleteOnMCASearch(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	// Prepare a mock DAO instance
 	dao = database.NewDAO(mockPool)
 	mockConn, err := pgxmock.NewConn()
@@ -345,7 +346,7 @@ func Test_DeleteStaleClustersResources(t *testing.T) {
 	// Prepare a mock DAO instance
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	dao = database.NewDAO(mockPool)
 	mockConn, err := pgxmock.NewConn()
 	if err != nil {
@@ -363,12 +364,12 @@ func Test_DeleteStaleClustersResources(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(`DELETE FROM "search"."resources" WHERE ("uid" = 'cluster__name-foo')`),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 	//delete managed cluster:
 	processClusterDelete(context.Background(), obj)
 
 	columns := []string{"cluster"}
-	pgxRows := pgxpoolmock.NewRows(columns).AddRow("name-foo").AddRow("remaining-managed-foo").ToPgxRows()
+	pgxRows := testutils.NewRows(columns).AddRow("name-foo").AddRow("remaining-managed-foo").ToPgxRows()
 
 	mockPool.EXPECT().Query(gomock.Any(),
 		gomock.Eq(`SELECT DISTINCT "cluster" FROM "search"."resources" WHERE ((data ? '_hubClusterResource') IS FALSE)`),
@@ -448,7 +449,7 @@ func Test_DeleteStaleClustersResources_DB_Outage(t *testing.T) {
 	// Prepare a mock DAO instance
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	dao = database.NewDAO(mockPool)
 	mockConn, err := pgxmock.NewConn()
 	//mock db error
@@ -468,13 +469,13 @@ func Test_DeleteStaleClustersResources_DB_Outage(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(`DELETE FROM "search"."resources" WHERE ("uid" = 'cluster__name-foo')`),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 	//delete managed cluster:
 
 	processClusterDelete(context.Background(), obj)
 
 	columns := []string{"cluster"}
-	pgxRows := pgxpoolmock.NewRows(columns).AddRow("name-foo").AddRow("remaining-managed-foo").ToPgxRows()
+	pgxRows := testutils.NewRows(columns).AddRow("name-foo").AddRow("remaining-managed-foo").ToPgxRows()
 
 	mockPool.EXPECT().Query(gomock.Any(),
 		gomock.Eq(`SELECT DISTINCT "cluster" FROM "search"."resources" WHERE ((data ? '_hubClusterResource') IS FALSE)`),
@@ -503,13 +504,13 @@ func Test_syncClusters_ContextCanceled(t *testing.T) {
 	// Set up the mock infrastructure
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	dao = database.NewDAO(mockPool)
 	dynamicClient = fakeDynamicClient()
 
 	// Mock the deleteStaleClusterResources call
 	columns := []string{"cluster"}
-	pgxRows := pgxpoolmock.NewRows(columns).ToPgxRows()
+	pgxRows := testutils.NewRows(columns).ToPgxRows()
 	mockPool.EXPECT().Query(gomock.Any(),
 		gomock.Eq(`SELECT DISTINCT "cluster" FROM "search"."resources" WHERE ((data ? '_hubClusterResource') IS FALSE)`),
 		gomock.Eq([]interface{}{}),
@@ -519,7 +520,7 @@ func Test_syncClusters_ContextCanceled(t *testing.T) {
 	// Allow any Query calls for checking existing resources
 	mockPool.EXPECT().Query(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	// Allow any Exec calls for upserting clusters
-	mockPool.EXPECT().Exec(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockPool.EXPECT().Exec(gomock.Any(), gomock.Any(), gomock.Any()).Return(pgconn.CommandTag{}, nil).AnyTimes()
 
 	// Create a context with a short timeout to ensure syncClusters exits
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -552,7 +553,7 @@ func Test_syncClusters_DeleteStaleError(t *testing.T) {
 	// Set up the mock infrastructure
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	dao = database.NewDAO(mockPool)
 	dynamicClient = fakeDynamicClient()
 
@@ -566,7 +567,7 @@ func Test_syncClusters_DeleteStaleError(t *testing.T) {
 	// Allow any Query calls for checking existing resources
 	mockPool.EXPECT().Query(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	// Allow any Exec calls for upserting clusters
-	mockPool.EXPECT().Exec(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockPool.EXPECT().Exec(gomock.Any(), gomock.Any(), gomock.Any()).Return(pgconn.CommandTag{}, nil).AnyTimes()
 
 	// Create a context with a short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

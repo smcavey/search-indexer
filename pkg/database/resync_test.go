@@ -5,9 +5,8 @@ package database
 import (
 	"context"
 	"errors"
-	"github.com/driftprogramming/pgxpoolmock"
-	"github.com/jackc/pgconn"
-	"github.com/pashagolub/pgxmock"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pashagolub/pgxmock/v4"
 	"io"
 	"os"
 	"testing"
@@ -116,10 +115,10 @@ func Test_HubClusterCleanupWithoutChangeWithRetry(t *testing.T) {
 		[]interface{}{}).Times(2).DoAndReturn(func(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 		if retry == 0 {
 			retry++
-			return nil, errors.New("error deleting old hub cluster")
+			return pgconn.CommandTag{}, errors.New("error deleting old hub cluster")
 		} else {
 			retry = 0
-			return pgconn.CommandTag("DELETE 1"), nil
+			return pgconn.NewCommandTag("DELETE 1"), nil
 		}
 	})
 
@@ -129,15 +128,15 @@ func Test_HubClusterCleanupWithoutChangeWithRetry(t *testing.T) {
 		[]interface{}{}).Times(2).DoAndReturn(func(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 		if retry == 0 {
 			retry++
-			return nil, errors.New("error deleting old hub cluster")
+			return pgconn.CommandTag{}, errors.New("error deleting old hub cluster")
 		} else {
-			return pgconn.CommandTag("DELETE 1"), nil
+			return pgconn.NewCommandTag("DELETE 1"), nil
 		}
 	})
 
 	// Mock selecting the distinct hub cluster names 4 times; once per attempt
 	cluster := []string{"cluster"}
-	clusterRows := pgxpoolmock.NewRows(cluster).AddRow("test-cluster").ToPgxRows()
+	clusterRows := testutils.NewRows(cluster).AddRow("test-cluster").ToPgxRows()
 	mockPool.EXPECT().Query(gomock.Any(), gomock.Eq(
 		`SELECT DISTINCT "cluster" FROM "search"."resources" WHERE ("data"?'_hubClusterResource' AND "data"->>'kind' <> 'Cluster')`),
 		[]interface{}{}).Return(clusterRows, nil).Times(4)

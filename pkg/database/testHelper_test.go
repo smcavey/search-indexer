@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/driftprogramming/pgxpoolmock"
 	"github.com/golang/mock/gomock"
 	"github.com/stolostron/search-indexer/pkg/testutils"
 	"k8s.io/klog/v2"
@@ -22,10 +21,10 @@ func AssertEqual(t *testing.T, a interface{}, b interface{}, message string) {
 }
 
 // Builds a DAO instance with a mock database connection.
-func buildMockDAO(t *testing.T) (DAO, *pgxpoolmock.MockPgxPool) {
+func buildMockDAO(t *testing.T) (DAO, *testutils.MockPgxPool) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 	dao := NewDAO(mockPool)
 
 	return dao, mockPool

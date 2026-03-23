@@ -4,16 +4,16 @@ package server
 import (
 	"testing"
 
-	"github.com/driftprogramming/pgxpoolmock"
 	"github.com/golang/mock/gomock"
 	"github.com/stolostron/search-indexer/pkg/database"
+	"github.com/stolostron/search-indexer/pkg/testutils"
 )
 
 // Builds a ServerConfig instance with a mock database connection.
-func buildMockServer(t *testing.T) (ServerConfig, *pgxpoolmock.MockPgxPool) {
+func buildMockServer(t *testing.T) (ServerConfig, *testutils.MockPgxPool) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockPool := pgxpoolmock.NewMockPgxPool(ctrl)
+	mockPool := testutils.NewMockPgxPool(ctrl)
 
 	dao := database.NewDAO(mockPool)
 	server := ServerConfig{

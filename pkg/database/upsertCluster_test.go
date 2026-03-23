@@ -11,12 +11,12 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/driftprogramming/pgxpoolmock"
 	"github.com/golang/mock/gomock"
-	"github.com/jackc/pgconn"
-	pgx "github.com/jackc/pgx/v4"
-	"github.com/pashagolub/pgxmock"
+	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/pashagolub/pgxmock/v4"
 	"github.com/stolostron/search-indexer/pkg/model"
+	"github.com/stolostron/search-indexer/pkg/testutils"
 )
 
 var clusterProps map[string]interface{}
@@ -85,7 +85,7 @@ func Test_UpsertCluster_Update1(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	// Execute function test.
 	dao.UpsertCluster(context.Background(), currCluster)
@@ -133,7 +133,7 @@ func Test_UpsertCluster_Update2(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	// Execute function test.
 	dao.UpsertCluster(context.Background(), currCluster)
@@ -180,7 +180,7 @@ func Test_UpsertCluster_Insert(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 	// Execute function test.
 	dao.UpsertCluster(context.Background(), currCluster)
 	AssertEqual(t, len(existingClustersCache), 1, "existingClustersCache should have length of 1")
@@ -263,7 +263,7 @@ func Test_DelCluster(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(`DELETE FROM "search"."resources" WHERE ("uid" = 'cluster__name-foo')`),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	// Execute function test.
 	dao.DeleteClusterAndResources(context.Background(), clusterName, true)
@@ -312,7 +312,7 @@ func Test_DelClusterResourcesError(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(`DELETE FROM "search"."resources" WHERE ("uid" = 'cluster__name-foo')`),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, nil)
+	).Return(pgconn.CommandTag{}, nil)
 
 	// Expect deletecluster to be called twice. First time, return error. Second time, return success.
 	mockPool.EXPECT().Exec(context.Background(),
@@ -323,10 +323,10 @@ func Test_DelClusterResourcesError(t *testing.T) {
 
 			if retryDel == 0 { // First try to delete cluster
 				retryDel++
-				return nil, errors.New("error deleting cluster from resources")
+				return pgconn.CommandTag{}, errors.New("error deleting cluster from resources")
 			} else {
 				retryDel = 0 //reset retryDel
-				return nil, nil
+				return pgconn.CommandTag{}, nil
 			}
 		})
 	// Execute function test.
@@ -353,7 +353,7 @@ func Test_GetManagedCluster(t *testing.T) {
 	}(mockConn, context.Background())
 	dao, mockPool := buildMockDAO(t)
 	columns := []string{"cluster"}
-	pgxRows := pgxpoolmock.NewRows(columns).AddRow(clusterName).ToPgxRows()
+	pgxRows := testutils.NewRows(columns).AddRow(clusterName).ToPgxRows()
 
 	mockPool.EXPECT().Query(gomock.Any(),
 		gomock.Eq(`SELECT DISTINCT "cluster" FROM "search"."resources" WHERE ((data ? '_hubClusterResource') IS FALSE)`),
@@ -456,7 +456,7 @@ func Test_UpsertCluster_ExecContextCanceled(t *testing.T) {
 	mockPool.EXPECT().Exec(gomock.Any(),
 		gomock.Eq(sql),
 		gomock.Eq([]interface{}{}),
-	).Return(nil, context.Canceled)
+	).Return(pgconn.CommandTag{}, context.Canceled)
 
 	// Execute function test - should handle context.Canceled gracefully
 	dao.UpsertCluster(context.Background(), currCluster)
