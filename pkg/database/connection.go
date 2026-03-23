@@ -52,12 +52,12 @@ func afterConnect(ctx context.Context, c *pgx.Conn) error {
 }
 
 // Checks idle connection is healthy before using it.
-func beforeAcquire(ctx context.Context, c *pgx.Conn) bool {
+func prepareConn(ctx context.Context, c *pgx.Conn) (bool, error) {
 	if err := c.Ping(ctx); err != nil {
 		klog.V(7).Info("Idle DB connection from pool is unhealthy, destroying it. ", err)
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 func initializePool() testutils.PgxPool {
@@ -80,8 +80,8 @@ func initializePool() testutils.PgxPool {
 	if configErr != nil {
 		klog.Fatal("Error parsing database connection configuration. ", configErr)
 	}
-	config.AfterConnect = afterConnect   // Checks new connection health before using it.
-	config.BeforeAcquire = beforeAcquire // Checks idle connection health before using it.
+	config.AfterConnect = afterConnect // Checks new connection health before using it.
+	config.PrepareConn = prepareConn   // Checks idle connection health before using it.
 	// Add jitter to prevent all connections from being closed at same time.
 	config.MaxConnLifetimeJitter = time.Duration(cfg.DBMaxConnLifeJitter) * time.Millisecond
 	config.MaxConns = cfg.DBMaxConns
